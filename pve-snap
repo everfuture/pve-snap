@@ -32,7 +32,7 @@ done
 # Logging
 ############################################################
 
-LOG_TAG="proxmox-snapshot"
+LOG_TAG="pve-snap"
 
 log_error() {
   logger -t "$LOG_TAG" -p user.err "$1"
