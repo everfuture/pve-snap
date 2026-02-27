@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+############################################################
+# Proxmox Snapshot Script
+#
+# Features
+# - Supports VM (qm) and Container (pct)
+# - Snapshot name format: SYYYYMMDDHHMM
+# - Config-driven ITEMS list
+# - Silent exit if ITEMS empty
+# - Logs warnings/errors to syslog via logger
+# - Designed to run from cron.d
+############################################################
+
+usage() {
+  echo "Usage: $0 -c /path/to/snapshot.conf"
+  exit 1
+}
+
+CONF=""
+while getopts ":c:" opt; do
+  case "$opt" in
+    c) CONF="$OPTARG" ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "${CONF}" && -f "${CONF}" ]] || usage
+
+############################################################
+# Logging
+############################################################
+
+LOG_TAG="proxmox-snapshot"
+
+log_error() {
+  logger -t "$LOG_TAG" -p user.err "$1"
+}
+
+log_warning() {
+  logger -t "$LOG_TAG" -p user.warning "$1"
+}
+
+# unexpected failures
+trap 'log_error "Script failed at line $LINENO (exit code $?)"' ERR
+
+############################################################
+# Load configuration
+############################################################
+
+# shellcheck disable=SC1090
+source "$CONF"
+
+: "${DEFAULT_DESC:=Automated snapshot}"
+: "${TZ:=}"
+export TZ
+
+# ---- silent exit if ITEMS undefined or empty ----
+if ! declare -p ITEMS >/dev/null 2>&1 || [[ ${#ITEMS[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+############################################################
+# Snapshot naming
+############################################################
+
+# Format: SYYYYMMDDHHMM
+snap_name="S$(date +%Y%m%d%H%M)"
+
+############################################################
+# Helpers
+############################################################
+
+snapshot_exists_vm() {
+  local vmid="$1" name="$2"
+  qm listsnapshot "$vmid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
+}
+
+snapshot_exists_ct() {
+  local ctid="$1" name="$2"
+  pct listsnapshot "$ctid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
+}
+
+############################################################
+# Snapshot execution
+############################################################
+
+do_snapshot_vm() {
+  local vmid="$1" name="$2" desc="$3"
+
+  if snapshot_exists_vm "$vmid" "$name"; then
+    msg="vm $vmid snapshot '$name' already exists"
+    echo "[WARN] $msg"
+    log_warning "$msg"
+    return 0
+  fi
+
+  echo "[RUN ] vm $vmid -> $name"
+  if ! qm snapshot "$vmid" "$name" --description "$desc"; then
+    log_error "Snapshot failed for VM $vmid ($name)"
+    return 1
+  fi
+}
+
+do_snapshot_ct() {
+  local ctid="$1" name="$2" desc="$3"
+
+  if snapshot_exists_ct "$ctid" "$name"; then
+    msg="ct $ctid snapshot '$name' already exists"
+    echo "[WARN] $msg"
+    log_warning "$msg"
+    return 0
+  fi
+
+  echo "[RUN ] ct $ctid -> $name"
+  if ! pct snapshot "$ctid" "$name" --description "$desc"; then
+    log_error "Snapshot failed for CT $ctid ($name)"
+    return 1
+  fi
+}
+
+############################################################
+# Main
+############################################################
+
+main() {
+
+  for entry in "${ITEMS[@]}"; do
+    IFS=',' read -r type id desc_override <<<"$entry"
+
+    type="${type,,}"   # lowercase
+    desc="${desc_override:-$DEFAULT_DESC}"
+
+    case "$type" in
+      vm)
+        do_snapshot_vm "$id" "$snap_name" "$desc"
+        ;;
+      ct)
+        do_snapshot_ct "$id" "$snap_name" "$desc"
+        ;;
+      *)
+        log_error "Invalid type '$type' in ITEMS entry: $entry"
+        exit 2
+        ;;
+    esac
+  done
+}
+
+main "$@"
