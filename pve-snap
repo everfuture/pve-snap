@@ -14,19 +14,13 @@ set -euo pipefail
 ############################################################
 
 usage() {
-  echo "Usage: $0 -c /path/to/snapshot.conf"
+  echo "Usage: $0 [MACHINE_ID ...]"
   exit 1
 }
 
-CONF=""
-while getopts ":c:" opt; do
-  case "$opt" in
-    c) CONF="$OPTARG" ;;
-    *) usage ;;
-  esac
-done
+CONF="/etc/pve-snap.conf"
 
-[[ -n "${CONF}" && -f "${CONF}" ]] || usage
+[[ -f "${CONF}" ]] || usage
 
 ############################################################
 # Logging
@@ -42,6 +36,10 @@ log_warning() {
   logger -t "$LOG_TAG" -p user.warning "$1"
 }
 
+log_success() {
+  logger -t "$LOG_TAG" -p user.notice "$1"
+}
+
 # unexpected failures
 trap 'log_error "Script failed at line $LINENO (exit code $?)"' ERR
 
@@ -55,11 +53,6 @@ source "$CONF"
 : "${DEFAULT_DESC:=Automated snapshot}"
 : "${TZ:=}"
 export TZ
-
-# ---- silent exit if ITEMS undefined or empty ----
-if ! declare -p ITEMS >/dev/null 2>&1 || [[ ${#ITEMS[@]} -eq 0 ]]; then
-  exit 0
-fi
 
 ############################################################
 # Snapshot naming
@@ -82,6 +75,22 @@ snapshot_exists_ct() {
   pct listsnapshot "$ctid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
 }
 
+detect_guest_type() {
+  local id="$1"
+
+  if qm status "$id" >/dev/null 2>&1; then
+    echo "vm"
+    return 0
+  fi
+
+  if pct status "$id" >/dev/null 2>&1; then
+    echo "ct"
+    return 0
+  fi
+
+  return 1
+}
+
 ############################################################
 # Snapshot execution
 ############################################################
@@ -101,6 +110,8 @@ do_snapshot_vm() {
     log_error "Snapshot failed for VM $vmid ($name)"
     return 1
   fi
+
+  log_success "Snapshot succeeded for VM $vmid ($name)"
 }
 
 do_snapshot_ct() {
@@ -118,6 +129,30 @@ do_snapshot_ct() {
     log_error "Snapshot failed for CT $ctid ($name)"
     return 1
   fi
+
+  log_success "Snapshot succeeded for CT $ctid ($name)"
+}
+
+do_snapshot_auto() {
+  local id="$1" name="$2" desc="$3"
+  local detected_type
+  local msg
+
+  if ! detected_type="$(detect_guest_type "$id")"; then
+    msg="No VM or CT found for machine ID $id"
+    echo "[ERROR] $msg"
+    log_error "$msg"
+    return 1
+  fi
+
+  case "$detected_type" in
+    vm)
+      do_snapshot_vm "$id" "$name" "$desc"
+      ;;
+    ct)
+      do_snapshot_ct "$id" "$name" "$desc"
+      ;;
+  esac
 }
 
 ############################################################
@@ -125,26 +160,33 @@ do_snapshot_ct() {
 ############################################################
 
 main() {
+  local rc=0
+
+  if [[ $# -gt 0 ]]; then
+    for id in "$@"; do
+      if ! do_snapshot_auto "$id" "$snap_name" "$DEFAULT_DESC"; then
+        rc=1
+      fi
+    done
+
+    return "$rc"
+  fi
+
+  # ---- silent exit if ITEMS undefined or empty ----
+  if ! declare -p ITEMS >/dev/null 2>&1 || [[ ${#ITEMS[@]} -eq 0 ]]; then
+    return 0
+  fi
 
   for entry in "${ITEMS[@]}"; do
-    IFS=',' read -r type id desc_override <<<"$entry"
-
-    type="${type,,}"   # lowercase
+    IFS=',' read -r id desc_override <<<"$entry"
     desc="${desc_override:-$DEFAULT_DESC}"
 
-    case "$type" in
-      vm)
-        do_snapshot_vm "$id" "$snap_name" "$desc"
-        ;;
-      ct)
-        do_snapshot_ct "$id" "$snap_name" "$desc"
-        ;;
-      *)
-        log_error "Invalid type '$type' in ITEMS entry: $entry"
-        exit 2
-        ;;
-    esac
+    if ! do_snapshot_auto "$id" "$snap_name" "$desc"; then
+      rc=1
+    fi
   done
+
+  return "$rc"
 }
 
 main "$@"
