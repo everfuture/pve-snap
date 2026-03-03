@@ -110,7 +110,7 @@ detect_guest_type() {
 
   if [[ -z "$QM_BIN" && -z "$PCT_BIN" ]]; then
     msg="qm and pct commands not found; check PATH for cron jobs"
-    emit_error "[ERROR] $msg"
+    emit_error "$msg"
     return 1
   fi
 
@@ -136,7 +136,7 @@ do_snapshot_vm() {
 
   if snapshot_exists_vm "$vmid" "$name"; then
     msg="vm $vmid snapshot '$name' already exists"
-    emit_warning "[WARN] $msg"
+    emit_warning "$msg"
     return 0
   fi
 
@@ -154,7 +154,7 @@ do_snapshot_ct() {
 
   if snapshot_exists_ct "$ctid" "$name"; then
     msg="ct $ctid snapshot '$name' already exists"
-    emit_warning "[WARN] $msg"
+    emit_warning "$msg"
     return 0
   fi
 
@@ -174,7 +174,7 @@ do_snapshot_auto() {
 
   if ! detected_type="$(detect_guest_type "$id")"; then
     msg="No VM or CT found for machine ID $id"
-    emit_error "[ERROR] $msg"
+    emit_error "$msg"
     return 1
   fi
 
