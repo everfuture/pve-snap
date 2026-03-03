@@ -104,6 +104,12 @@ snapshot_exists_ct() {
   "$PCT_BIN" listsnapshot "$ctid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
 }
 
+vm_is_running() {
+  local vmid="$1"
+  [[ -n "$QM_BIN" ]] || return 1
+  "$QM_BIN" status "$vmid" 2>/dev/null | grep -qx "status: running"
+}
+
 detect_guest_type() {
   local id="$1"
   local msg
@@ -133,6 +139,8 @@ detect_guest_type() {
 
 do_snapshot_vm() {
   local vmid="$1" name="$2" desc="$3"
+  local -a snapshot_args
+  local snapshot_mode
 
   if snapshot_exists_vm "$vmid" "$name"; then
     msg="vm $vmid snapshot '$name' already exists"
@@ -140,13 +148,21 @@ do_snapshot_vm() {
     return 0
   fi
 
-  emit_info "[RUN ] vm $vmid -> $name"
-  if ! "$QM_BIN" snapshot "$vmid" "$name" --description "$desc"; then
-    log_error "Snapshot failed for VM $vmid ($name)"
+  snapshot_args=("$vmid" "$name" --description "$desc")
+  if vm_is_running "$vmid"; then
+    snapshot_args+=(--vmstate 1)
+    snapshot_mode="with RAM"
+  else
+    snapshot_mode="disk-only"
+  fi
+
+  emit_info "$name vm $vmid snapshot started ($snapshot_mode)"
+  if ! "$QM_BIN" snapshot "${snapshot_args[@]}"; then
+    emit_error "$name vm $vmid snapshot failed"
     return 1
   fi
 
-  log_success "Snapshot succeeded for VM $vmid ($name)"
+  emit_info "$name vm $vmid snapshot succeeded"
 }
 
 do_snapshot_ct() {
@@ -158,13 +174,13 @@ do_snapshot_ct() {
     return 0
   fi
 
-  emit_info "[RUN ] ct $ctid -> $name"
+  emit_info "$name ct $ctid snapshot started"
   if ! "$PCT_BIN" snapshot "$ctid" "$name" --description "$desc"; then
-    log_error "Snapshot failed for CT $ctid ($name)"
+    emit_error "$name ct $ctid snapshot failed"
     return 1
   fi
 
-  log_success "Snapshot succeeded for CT $ctid ($name)"
+  emit_info "$name ct $ctid snapshot succeeded"
 }
 
 do_snapshot_auto() {
