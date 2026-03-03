@@ -222,4 +222,6 @@ main() {
   return "$rc"
 }
 
-main "$@"
+if ! main "$@"; then
+  exit 1
+fi
