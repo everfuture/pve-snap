@@ -22,22 +22,34 @@ CONF="/etc/pve-snap.conf"
 
 [[ -f "${CONF}" ]] || usage
 
+# cron often runs with a minimal PATH that omits sbin directories
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 ############################################################
 # Logging
 ############################################################
 
 LOG_TAG="pve-snap"
+LOGGER_BIN="$(command -v logger || true)"
+QM_BIN="$(command -v qm || true)"
+PCT_BIN="$(command -v pct || true)"
 
 log_error() {
-  logger -t "$LOG_TAG" -p user.err "$1"
+  if [[ -n "$LOGGER_BIN" ]]; then
+    "$LOGGER_BIN" -t "$LOG_TAG" -p user.err "$1"
+  fi
 }
 
 log_warning() {
-  logger -t "$LOG_TAG" -p user.warning "$1"
+  if [[ -n "$LOGGER_BIN" ]]; then
+    "$LOGGER_BIN" -t "$LOG_TAG" -p user.warning "$1"
+  fi
 }
 
 log_success() {
-  logger -t "$LOG_TAG" -p user.notice "$1"
+  if [[ -n "$LOGGER_BIN" ]]; then
+    "$LOGGER_BIN" -t "$LOG_TAG" -p user.notice "$1"
+  fi
 }
 
 # unexpected failures
@@ -67,23 +79,33 @@ snap_name="S$(date +%Y%m%d%H%M)"
 
 snapshot_exists_vm() {
   local vmid="$1" name="$2"
-  qm listsnapshot "$vmid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
+  [[ -n "$QM_BIN" ]] || return 1
+  "$QM_BIN" listsnapshot "$vmid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
 }
 
 snapshot_exists_ct() {
   local ctid="$1" name="$2"
-  pct listsnapshot "$ctid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
+  [[ -n "$PCT_BIN" ]] || return 1
+  "$PCT_BIN" listsnapshot "$ctid" 2>/dev/null | awk '{print $1}' | grep -qx "$name"
 }
 
 detect_guest_type() {
   local id="$1"
+  local msg
 
-  if qm status "$id" >/dev/null 2>&1; then
+  if [[ -z "$QM_BIN" && -z "$PCT_BIN" ]]; then
+    msg="qm and pct commands not found; check PATH for cron jobs"
+    echo "[ERROR] $msg"
+    log_error "$msg"
+    return 1
+  fi
+
+  if [[ -n "$QM_BIN" ]] && "$QM_BIN" status "$id" >/dev/null 2>&1; then
     echo "vm"
     return 0
   fi
 
-  if pct status "$id" >/dev/null 2>&1; then
+  if [[ -n "$PCT_BIN" ]] && "$PCT_BIN" status "$id" >/dev/null 2>&1; then
     echo "ct"
     return 0
   fi
@@ -106,7 +128,7 @@ do_snapshot_vm() {
   fi
 
   echo "[RUN ] vm $vmid -> $name"
-  if ! qm snapshot "$vmid" "$name" --description "$desc"; then
+  if ! "$QM_BIN" snapshot "$vmid" "$name" --description "$desc"; then
     log_error "Snapshot failed for VM $vmid ($name)"
     return 1
   fi
@@ -125,7 +147,7 @@ do_snapshot_ct() {
   fi
 
   echo "[RUN ] ct $ctid -> $name"
-  if ! pct snapshot "$ctid" "$name" --description "$desc"; then
+  if ! "$PCT_BIN" snapshot "$ctid" "$name" --description "$desc"; then
     log_error "Snapshot failed for CT $ctid ($name)"
     return 1
   fi
