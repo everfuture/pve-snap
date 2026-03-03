@@ -52,6 +52,21 @@ log_success() {
   fi
 }
 
+emit_info() {
+  echo "$1"
+  log_success "$1"
+}
+
+emit_warning() {
+  echo "$1"
+  log_warning "$1"
+}
+
+emit_error() {
+  echo "$1"
+  log_error "$1"
+}
+
 # unexpected failures
 trap 'log_error "Script failed at line $LINENO (exit code $?)"' ERR
 
@@ -95,8 +110,7 @@ detect_guest_type() {
 
   if [[ -z "$QM_BIN" && -z "$PCT_BIN" ]]; then
     msg="qm and pct commands not found; check PATH for cron jobs"
-    echo "[ERROR] $msg"
-    log_error "$msg"
+    emit_error "[ERROR] $msg"
     return 1
   fi
 
@@ -122,12 +136,11 @@ do_snapshot_vm() {
 
   if snapshot_exists_vm "$vmid" "$name"; then
     msg="vm $vmid snapshot '$name' already exists"
-    echo "[WARN] $msg"
-    log_warning "$msg"
+    emit_warning "[WARN] $msg"
     return 0
   fi
 
-  echo "[RUN ] vm $vmid -> $name"
+  emit_info "[RUN ] vm $vmid -> $name"
   if ! "$QM_BIN" snapshot "$vmid" "$name" --description "$desc"; then
     log_error "Snapshot failed for VM $vmid ($name)"
     return 1
@@ -141,12 +154,11 @@ do_snapshot_ct() {
 
   if snapshot_exists_ct "$ctid" "$name"; then
     msg="ct $ctid snapshot '$name' already exists"
-    echo "[WARN] $msg"
-    log_warning "$msg"
+    emit_warning "[WARN] $msg"
     return 0
   fi
 
-  echo "[RUN ] ct $ctid -> $name"
+  emit_info "[RUN ] ct $ctid -> $name"
   if ! "$PCT_BIN" snapshot "$ctid" "$name" --description "$desc"; then
     log_error "Snapshot failed for CT $ctid ($name)"
     return 1
@@ -162,8 +174,7 @@ do_snapshot_auto() {
 
   if ! detected_type="$(detect_guest_type "$id")"; then
     msg="No VM or CT found for machine ID $id"
-    echo "[ERROR] $msg"
-    log_error "$msg"
+    emit_error "[ERROR] $msg"
     return 1
   fi
 
